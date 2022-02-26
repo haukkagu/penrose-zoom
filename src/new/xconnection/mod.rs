@@ -9,15 +9,14 @@
 //! [1]: crate::core::manager::WindowManager
 use crate::{
     draw::Color,
-    v3::{
+    new::{
         bindings::{KeyBindings, KeyPress, MouseBindings},
-        client::Client,
+        client::{new_from_x_state, Client},
         data_types::{Point, Region},
-        screen::Screen,
     },
 };
-
 use penrose_proc::stubbed_companion_trait;
+use std::collections::HashMap;
 
 pub mod atom;
 pub mod event;
@@ -149,7 +148,7 @@ pub trait XState: XAtomQuerier {
 
     /// Determine the currently connected [screens][Screen] and return their details
     #[stub(Ok(vec![]))]
-    fn current_screens(&self) -> Result<Vec<Screen>>;
+    fn current_screens(&self) -> Result<Vec<Region>>;
 
     /// Determine the current (x,y) position of the cursor relative to the root window.
     #[stub(Ok(Point::default()))]
@@ -158,7 +157,7 @@ pub trait XState: XAtomQuerier {
     /// Warp the cursor to be within the specified window. If id == None then behaviour is
     /// definined by the implementor (e.g. warp cursor to active window, warp to center of screen)
     #[stub(Ok(()))]
-    fn warp_cursor(&self, win_id: Option<Xid>, screen: &Screen) -> Result<()>;
+    fn warp_cursor(&self, win_id: Option<Xid>, screen: &Region) -> Result<()>;
 
     /// Return the current (x, y, w, h) dimensions of the requested window
     #[stub(Ok(Region::default()))]
@@ -226,7 +225,7 @@ pub trait XClientHandler {
         if let Some(c) = win {
             if !c.mapped {
                 c.mapped = true;
-                self.map_client(c.id)?;
+                self.map_client(c.id())?;
             }
         }
         Ok(())
@@ -237,7 +236,7 @@ pub trait XClientHandler {
         if let Some(c) = win {
             if c.mapped {
                 c.mapped = false;
-                self.unmap_client(c.id)?;
+                self.unmap_client(c.id())?;
             }
         }
         Ok(())
@@ -426,7 +425,7 @@ pub trait XKeyboardHandler {
 /// assumed.
 #[stubbed_companion_trait(doc_hidden = "true")]
 pub trait XConn:
-    Sync + XState + XEventHandler + XClientHandler + XClientProperties + XClientConfig + Sized
+    XState + XEventHandler + XClientHandler + XClientProperties + XClientConfig + Sized
 {
     /// Hydrate this XConn to restore internal state following serde deserialization
     #[cfg(feature = "serde")]
@@ -461,7 +460,11 @@ pub trait XConn:
     /// This is what determines which key press events end up being sent through in the main event
     /// loop for the WindowManager.
     #[stub(Ok(()))]
-    fn grab_keys(&self, key_bindings: &KeyBindings, mouse_bindings: &MouseBindings) -> Result<()>;
+    fn grab_keys(
+        &self,
+        key_bindings: &KeyBindings<Self>,
+        mouse_bindings: &MouseBindings<Self>,
+    ) -> Result<()>;
 
     /*
      *  The following default implementations should used if possible.
@@ -573,32 +576,39 @@ pub trait XConn:
         return c.wm_type.iter().all(|ty| !unmanaged_types.contains(ty));
     }
 
-    /// The subset of active clients that are considered managed by penrose
-    fn active_managed_clients(&self, floating_classes: &[&str]) -> Result<Vec<Client>> {
-        Ok(self
-            .active_clients()?
-            .into_iter()
-            .filter_map(|id| {
-                let attrs_ok = self.get_window_attributes(id).map_or(true, |a| {
-                    !a.override_redirect
-                        && a.window_class == WindowClass::InputOutput
-                        && a.map_state == MapState::Viewable
-                });
-                if attrs_ok {
-                    trace!(id, "parsing existing client");
-                    let wix = match self.get_prop(id, Atom::NetWmDesktop.as_ref()) {
-                        Ok(Prop::Cardinal(wix)) => wix,
-                        _ => 0, // Drop unknown clients onto ws 0 as we know that is always there
-                    };
+    /// The subset of active clients that are considered managed by penrose mapped by their current
+    /// workspace.
+    fn active_managed_clients(
+        &self,
+        floating_classes: &[&str],
+    ) -> Result<HashMap<usize, Vec<Client>>> {
+        let pairs = self.active_clients()?.into_iter().filter_map(|id| {
+            let attrs_ok = self.get_window_attributes(id).map_or(true, |a| {
+                !a.override_redirect
+                    && a.window_class == WindowClass::InputOutput
+                    && a.map_state == MapState::Viewable
+            });
+            if attrs_ok {
+                trace!(id, "parsing existing client");
+                let wix = match self.get_prop(id, Atom::NetWmDesktop.as_ref()) {
+                    Ok(Prop::Cardinal(wix)) => wix,
+                    _ => 0, // Drop unknown clients onto ws 0 as we know that is always there
+                };
 
-                    let c = Client::new(self, id, wix as usize, floating_classes);
-                    if self.is_managed_client(&c) {
-                        return Some(c);
-                    }
+                let c = new_from_x_state(self, id, floating_classes);
+                if self.is_managed_client(&c) {
+                    return Some((wix as usize, c));
                 }
-                None
-            })
-            .collect())
+            }
+            None
+        });
+
+        let mut map: HashMap<usize, Vec<Client>> = HashMap::new();
+        for (wix, c) in pairs {
+            map.entry(wix).or_default().push(c);
+        }
+
+        Ok(map)
     }
 }
 
@@ -612,7 +622,7 @@ mod mock_conn {
 
     #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
     pub struct MockXConn {
-        screens: Vec<Screen>,
+        screens: Vec<Region>,
         #[cfg_attr(feature = "serde", serde(skip))]
         events: Cell<Vec<XEvent>>,
         focused: Cell<Xid>,
@@ -632,7 +642,7 @@ mod mock_conn {
 
     impl MockXConn {
         /// Set up a new [MockXConn] with pre-defined [Screen]s and an event stream to pull from
-        pub fn new(screens: Vec<Screen>, events: Vec<XEvent>, unmanaged_ids: Vec<Xid>) -> Self {
+        pub fn new(screens: Vec<Region>, events: Vec<XEvent>, unmanaged_ids: Vec<Xid>) -> Self {
             MockXConn {
                 screens,
                 events: Cell::new(events),
@@ -648,60 +658,60 @@ mod mock_conn {
         }
     }
 
-    __impl_stub_xcon! {
-        for MockXConn;
+    // __impl_stub_xcon! {
+    //     for MockXConn;
 
-        atom_queries: {
-            fn mock_atom_id(&self, name: &str) -> Result<Xid> {
-                Ok(name.len() as u32)
-            }
-        }
-        client_properties: {
-            fn mock_get_prop(&self, id: Xid, name: &str) -> Result<Prop> {
-                if name == Atom::WmName.as_ref() || name == Atom::NetWmName.as_ref() {
-                    Ok(Prop::UTF8String(vec!["mock name".into()]))
-                } else {
-                    Err(XError::MissingProperty(name.into(), id))
-                }
-            }
-        }
-        client_handler: {
-            fn mock_focus_client(&self, id: Xid) -> Result<()> {
-                self.focused.replace(id);
-                Ok(())
-            }
-        }
-        client_config: {}
-        event_handler: {
-            fn mock_wait_for_event(&self) -> Result<XEvent> {
-                let mut remaining = self.events.replace(vec![]);
-                if remaining.is_empty() {
-                    return Err(XError::ConnectionClosed)
-                }
-                let next = remaining.remove(0);
-                self.events.set(remaining);
-                Ok(next)
-            }
+    //     atom_queries: {
+    //         fn mock_atom_id(&self, name: &str) -> Result<Xid> {
+    //             Ok(name.len() as u32)
+    //         }
+    //     }
+    //     client_properties: {
+    //         fn mock_get_prop(&self, id: Xid, name: &str) -> Result<Prop> {
+    //             if name == Atom::WmName.as_ref() || name == Atom::NetWmName.as_ref() {
+    //                 Ok(Prop::UTF8String(vec!["mock name".into()]))
+    //             } else {
+    //                 Err(XError::MissingProperty(name.into(), id))
+    //             }
+    //         }
+    //     }
+    //     client_handler: {
+    //         fn mock_focus_client(&self, id: Xid) -> Result<()> {
+    //             self.focused.replace(id);
+    //             Ok(())
+    //         }
+    //     }
+    //     client_config: {}
+    //     event_handler: {
+    //         fn mock_wait_for_event(&self) -> Result<XEvent> {
+    //             let mut remaining = self.events.replace(vec![]);
+    //             if remaining.is_empty() {
+    //                 return Err(XError::ConnectionClosed)
+    //             }
+    //             let next = remaining.remove(0);
+    //             self.events.set(remaining);
+    //             Ok(next)
+    //         }
 
-            fn mock_send_client_event(&self, _: ClientMessage) -> Result<()> {
-                Ok(())
-            }
-        }
-        state: {
-            fn mock_current_screens(&self) -> Result<Vec<Screen>> {
-                Ok(self.screens.clone())
-            }
+    //         fn mock_send_client_event(&self, _: ClientMessage) -> Result<()> {
+    //             Ok(())
+    //         }
+    //     }
+    //     state: {
+    //         fn mock_current_screens(&self) -> Result<Vec<Region>> {
+    //             Ok(self.screens.clone())
+    //         }
 
-            fn mock_focused_client(&self) -> Result<Xid> {
-                Ok(self.focused.get())
-            }
-        }
-        conn: {
-            fn mock_is_managed_client(&self, c: &Client) -> bool {
-                !self.unmanaged_ids.contains(&c.id())
-            }
-        }
-    }
+    //         fn mock_focused_client(&self) -> Result<Xid> {
+    //             Ok(self.focused.get())
+    //         }
+    //     }
+    //     conn: {
+    //         fn mock_is_managed_client(&self, c: &Client) -> bool {
+    //             !self.unmanaged_ids.contains(&c.id())
+    //         }
+    //     }
+    // }
 }
 
 #[cfg(test)]

@@ -1,12 +1,13 @@
-use super::super::{data_types::Point, handle::WmHandle, xconnection::Xid, Result};
-use super::ModifierKey;
+use crate::new::{
+    bindings::ModifierKey, data_types::Point, manager::WindowManager, xconnection::Xid, Result,
+};
 use std::collections::HashMap;
 
 /// An action to be run in response to a mouse event
-pub type MouseEventHandler = Box<dyn FnMut(WmHandle, &MouseEvent) -> Result<()> + Send + Sync>;
+pub type MouseEventHandler<X> = Box<dyn FnMut(&mut WindowManager<X>, &MouseEvent) -> Result<()>>;
 
 /// User defined mouse bindings
-pub type MouseBindings = HashMap<(MouseEventKind, MouseState), MouseEventHandler>;
+pub type MouseBindings<X> = HashMap<(MouseEventKind, MouseState), MouseEventHandler<X>>;
 
 /// Known mouse buttons for binding actions
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]

@@ -57,7 +57,7 @@ impl<X: XConn> WindowManager<X> {
         mut mouse_bindings: MouseBindings,
         error_handler: ErrorHandler,
     ) -> Result<()> {
-        let WindowManager { x, c, s } = self;
+        let WindowManager { x, c, s, rx } = self;
 
         // ignore SIGCHILD and allow child / inherited processes to be inherited by pid1
         trace!("registering SIGCHILD signal handler");

@@ -1,7 +1,4 @@
-use super::super::{
-    error::{Error, Result},
-    handle::WmHandle,
-};
+use crate::new::{manager::WindowManager, Error, Result};
 use std::{collections::HashMap, convert::TryFrom};
 use strum::EnumIter;
 
@@ -9,10 +6,10 @@ use strum::EnumIter;
 use penrose_keysyms::XKeySym;
 
 /// Some action to be run by a user key binding
-pub type KeyEventHandler = Box<dyn FnMut(WmHandle) -> Result<()> + Send + Sync>;
+pub type KeyEventHandler<X> = Box<dyn FnMut(&mut WindowManager<X>) -> Result<()>>;
 
 /// User defined key bindings
-pub type KeyBindings = HashMap<KeyCode, KeyEventHandler>;
+pub type KeyBindings<X> = HashMap<KeyCode, KeyEventHandler<X>>;
 
 /// Abstraction layer for working with key presses
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +44,7 @@ pub enum KeyPress {
 impl TryFrom<XKeySym> for KeyPress {
     type Error = Error;
 
-    fn try_from(s: XKeySym) -> Result<KeyPress> {
+    fn try_from(s: XKeySym) -> std::result::Result<KeyPress, Error> {
         Ok(match s {
             XKeySym::XK_Return | XKeySym::XK_KP_Enter | XKeySym::XK_ISO_Enter => KeyPress::Return,
             XKeySym::XK_Escape => KeyPress::Escape,
