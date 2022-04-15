@@ -418,6 +418,14 @@ impl Workspace {
         self.clients.drag_focused(direction).copied()
     }
 
+    /// Swap the focused client with the first client
+    pub fn zoom_client(&mut self) {
+        if !self.layout_conf().allow_wrapping {
+            return;
+        }
+        self.clients.zoom_focused()
+    }
+
     /// Rotate the client stack in the given direction
     ///
     /// # Example

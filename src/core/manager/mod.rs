@@ -23,13 +23,13 @@ use crate::core::{helpers::logging_error_handler, layout::LayoutFunc};
 #[cfg(feature = "serde")]
 use std::collections::HashMap;
 
-mod clients;
+pub mod clients;
 mod event;
 mod layout;
 mod screens;
 mod state;
 mod util;
-mod workspaces;
+pub mod workspaces;
 
 use clients::Clients;
 use event::process_next_event;
@@ -873,6 +873,23 @@ impl<X: XConn> WindowManager<X> {
         if let Some(id) = self.clients.focused_client_id() {
             let wix = self.screens.active_ws_index();
             self.workspaces.drag_client(wix, direction);
+            self.apply_layout(wix)?;
+            self.update_focus(id)?;
+            self.conn.warp_cursor(Some(id), self.screens.focused())?;
+        }
+
+        Ok(())
+    }
+
+    /// Swap the focused [Client] with the first [Client] on the stack.
+    pub fn zoom_client(&mut self) -> Result<()> {
+        if let Some(id) = self.clients.focused_client_id() {
+            if id == 0 {
+                return Ok(());
+            }
+
+            let wix = self.screens.active_ws_index();
+            self.workspaces.zoom_client(wix);
             self.apply_layout(wix)?;
             self.update_focus(id)?;
             self.conn.warp_cursor(Some(id), self.screens.focused())?;

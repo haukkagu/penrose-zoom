@@ -195,6 +195,10 @@ impl<T> Ring<T> {
         self.cycle_focus(direction)
     }
 
+    pub fn zoom_focused(&mut self) {
+        self.elements.swap(self.focused, 0);
+    }
+
     pub fn len(&self) -> usize {
         self.elements.len()
     }

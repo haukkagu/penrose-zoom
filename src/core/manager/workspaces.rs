@@ -206,6 +206,12 @@ impl Workspaces {
         });
     }
 
+    pub fn zoom_client(&mut self, wix: usize) {
+        self.inner.apply_to(&Selector::Index(wix), |ws| {
+            ws.zoom_client();
+        });
+    }
+
     pub fn rotate_clients(&mut self, wix: usize, direction: Direction) {
         self.inner.apply_to(&Selector::Index(wix), |ws| {
             ws.rotate_clients(direction);
